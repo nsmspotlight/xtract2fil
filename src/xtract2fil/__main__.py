@@ -1,16 +1,17 @@
-import cyclopts
+import logging
 from pathlib import Path
 from datetime import datetime
 from rich.console import Console
 from contextlib import ExitStack
 
 import pytz
+import cyclopts
 import numpy as np
 import pandas as pd
 import astropy.units as u
 from priwo import writehdr
 from astropy.time import Time
-from joblib import Parallel, delayed
+from rich.logging import RichHandler
 from astropy.coordinates import SkyCoord
 
 app = cyclopts.App()
@@ -18,6 +19,14 @@ app["--help"].group = "Admin"
 app["--version"].group = "Admin"
 
 console = Console()
+
+logging.basicConfig(
+    level="INFO",
+    datefmt="[%X]",
+    format="%(message)s",
+    handlers=[RichHandler(console=console, rich_tracebacks=True)],
+)
+log = logging.getLogger("xtract2fil")
 
 
 def read_asciihdr(fn: str | Path) -> dict:
@@ -189,17 +198,11 @@ def xtract2fil(fn: str | Path, nbeams: int, outdir: str | Path):
 
 
 @app.default
-def main(
-    files: list[str | Path],
-    /,
-    nbeams: int = 10,
-    njobs: int | None = None,
-    output: str | Path = Path.cwd(),
-):
-    with console.status("Xtracting..."):
-        Parallel(n_jobs=njobs if njobs is not None else len(files))(
-            delayed(xtract2fil)(fn=f, nbeams=nbeams, outdir=output) for f in files
-        )
+def main(files: list[str | Path], /, nbeams: int = 10, output: str | Path = Path.cwd()):
+    for f in files:
+        log.info(f"Working on file: {Path(f).name}")
+        xtract2fil(fn=f, nbeams=nbeams, outdir=output)
+        log.info(f"Done with extracting filterbanks from file: {Path(f).name}!")
 
 
 if __name__ == "__main__":
