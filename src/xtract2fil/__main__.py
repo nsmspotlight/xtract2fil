@@ -11,6 +11,7 @@ import pandas as pd
 import astropy.units as u
 from priwo import writehdr
 from astropy.time import Time
+from joblib import Parallel, delayed
 from rich.logging import RichHandler
 from astropy.coordinates import SkyCoord
 
@@ -155,8 +156,9 @@ def xtract2fil(fn: str | Path, nbeams: int, outdir: str | Path):
         dec_d = int(dec_d)
         dec_m = int(dec_m)
         dec_s = float(dec_s)
-        if dec_d < 0.0:
+        if dec_m < 0.0:
             dec_m = -dec_m
+        if dec_s < 0.0:
             dec_s = -dec_s
         dec_d = str(dec_d).zfill(2)
         dec_m = str(dec_m).zfill(2)
@@ -198,11 +200,24 @@ def xtract2fil(fn: str | Path, nbeams: int, outdir: str | Path):
 
 
 @app.default
-def main(files: list[str | Path], /, nbeams: int = 10, output: str | Path = Path.cwd()):
-    for f in files:
-        log.info(f"Working on file: {Path(f).name}")
-        xtract2fil(fn=f, nbeams=nbeams, outdir=output)
-        log.info(f"Done with extracting filterbanks from file: {Path(f).name}!")
+def main(
+    files: list[str | Path],
+    /,
+    nbeams: int = 10,
+    njobs: int | None = None,
+    output: str | Path = Path.cwd(),
+):
+    njobs = njobs if njobs is not None else len(files)
+    log.info(f"Xtracting {nbeams} beams from {len(files)} files...")
+    log.info(f"Using {njobs} cores")
+    Parallel(n_jobs=njobs)(
+        delayed(xtract2fil)(
+            fn=f,
+            nbeams=nbeams,
+            outdir=output,
+        )
+        for f in files
+    )
 
 
 if __name__ == "__main__":
