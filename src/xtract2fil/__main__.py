@@ -42,8 +42,8 @@ def read_asciihdr(fn: str | Path) -> dict:
             key = key.strip()
             val = val.strip()
             try:
+                # fmt: off
                 name, conv = {
-                    # fmt: off
                     "Header file": ("fname", str),
                     "Beam ID": ("beamid", int),
                     "Host ID": ("hostid", int),
@@ -73,8 +73,8 @@ def read_asciihdr(fn: str | Path) -> dict:
                     "Broad-band RFI Filter": ("rfifilter", lambda x: False if x == "OFF" else True),
                     "Date": ("istdate", str),
                     "IST Time": ("isttime", str),
-                    # fmt: on
                 }[key]
+                # fmt: on
                 hdr[name] = conv(val)
             except KeyError:
                 pass
@@ -106,9 +106,66 @@ def inchunks(fx, N: int):
         yield data
 
 
-def xtract2fil(fn: str | Path, nbeams: int, outdir: str | Path):
+def pad(
+    array: np.ndarray,
+    targetlen: int,
+    loc: str = "end",
+    axis: int = 0,
+):
+    ndim = len(array.shape)
+    padsize = targetlen - array.shape[axis]
+    if padsize < -0:
+        return array
+    npad = [(0, 0) for _ in range(ndim)]
+    if loc == "start":
+        npad[axis] = (int(padsize), 0)
+    elif loc == "end":
+        npad[axis] = (0, int(padsize))
+    else:
+        npad[axis] = (int(padsize // 2), int(padsize // 2))
+    return np.pad(array, pad_width=npad)
+
+
+def closest(N: int, n: int):
+    if N % n == 0:
+        return 0
+    else:
+        q = N // n
+        return (q + 1) * n - N
+
+
+def downsample(array: np.ndarray, tbin: int = 1, fbin: int = 1) -> np.ndarray:
+    freqpad = closest(array.shape[0], fbin)
+    timepad = closest(array.shape[1], tbin)
+    array = pad(array, array.shape[0] + freqpad, axis=0)
+    array = pad(array, array.shape[1] + timepad, axis=1)
+
+    array = array.reshape(
+        int(array.shape[0] // fbin),
+        int(fbin),
+        int(array.shape[1]),
+    ).mean(1)
+
+    array = array.reshape(
+        int(array.shape[0]),
+        int(array.shape[1] // tbin),
+        int(tbin),
+    ).mean(2)
+
+    return array
+
+
+def xtract2fil(
+    fn: str | Path,
+    nbeams: int,
+    outdir: str | Path,
+    fbin: int = 1,
+    tbin: int = 1,
+    offset: int = 64,
+):
     fn = Path(fn)
     outdir = Path(outdir)
+    downflag = (fbin > 1) or (tbin > 1)
 
     hdr = read_asciihdr(str(fn) + ".ahdr")
 
@@ -135,8 +192,9 @@ def xtract2fil(fn: str | Path, nbeams: int, outdir: str | Path):
     slicesize = nf * nt * nblks
 
     rad = getattr(u, "rad")
-    outpaths = [outdir / f"BM{ix}.fil" for ix in radecs["BM-Idx"].to_numpy(dtype=int)]
-    for ix, outpath in enumerate(outpaths):
+    beamix = radecs["BM-Idx"].to_numpy(dtype=int)
+    filpaths = [outdir / f"BM{ix}{'.down' if downflag else ''}.fil" for ix in beamix]
+    for ix, filpath in enumerate(filpaths):
         coords = SkyCoord(radecs.iloc[ix]["RA"] * rad, radecs.iloc[ix]["DEC"] * rad)
 
         ra_d, ra_m, ra_s = getattr(getattr(coords, "ra"), "hms")
@@ -178,43 +236,58 @@ def xtract2fil(fn: str | Path, nbeams: int, outdir: str | Path):
                 "barycentric": 0,
                 "pulsarcentric": 0,
                 "tstart": mjd,
-                "foff": df,
+                "foff": df * fbin,
                 "fch1": fh,
-                "tsamp": dt,
-                "nchans": nf,
+                "tsamp": dt * tbin,
+                "nchans": int(nf / fbin),
                 "src_raj": ra_sigproc,
                 "src_dej": dec_sigproc,
                 "size": 0,
             },
-            str(outpath),
+            str(filpath),
         )
 
     with ExitStack() as stack:
-        outfiles = [stack.enter_context(open(outpath, "ab")) for outpath in outpaths]
+        filfiles = [stack.enter_context(open(_, "ab")) for _ in filpaths]
         with open(fn, "rb") as fx:
             for ix, data in enumerate(inchunks(fx, slicesize)):
-                outfile = outfiles[ix % nbeams]
-                array = np.frombuffer(data, dtype=np.uint8).reshape(-1, nf)
+                filfile = filfiles[ix % nbeams]
+                if offset != 0:
+                    array = np.frombuffer(data, dtype=np.int8)
+                    array = array.astype(np.int16) + offset
+                    array = array.astype(np.uint8)
+                else:
+                    array = np.frombuffer(data, dtype=np.uint8)
+                array = array.reshape(-1, nf)
                 array = np.fliplr(array) if flip else array
-                array.tofile(outfile)
+                if downflag:
+                    array = downsample(array, tbin=tbin, fbin=fbin)
+                    array = array.astype(np.uint8)
+                array.tofile(filfile)
 
 
 @app.default
 def main(
     files: list[str | Path],
     /,
+    fbin: int = 1,
+    tbin: int = 1,
+    njobs: int = -1,
     nbeams: int = 10,
-    njobs: int | None = None,
+    offset: int = 64,
     output: str | Path = Path.cwd(),
 ):
-    njobs = njobs if njobs is not None else len(files)
+    njobs = njobs if njobs > 0 else len(files)
     log.info(f"Xtracting {nbeams} beams from {len(files)} files...")
     log.info(f"Using {njobs} cores")
     Parallel(n_jobs=njobs)(
         delayed(xtract2fil)(
             fn=f,
+            fbin=fbin,
+            tbin=tbin,
             nbeams=nbeams,
             outdir=output,
+            offset=offset,
         )
         for f in files
     )
