@@ -106,55 +106,6 @@ def inchunks(fx, N: int):
         yield data
 
 
-def pad(
-    array: np.ndarray,
-    targetlen: int,
-    loc: str = "end",
-    axis: int = 0,
-):
-    ndim = len(array.shape)
-    padsize = targetlen - array.shape[axis]
-    if padsize < -0:
-        return array
-    npad = [(0, 0) for _ in range(ndim)]
-    if loc == "start":
-        npad[axis] = (int(padsize), 0)
-    elif loc == "end":
-        npad[axis] = (0, int(padsize))
-    else:
-        npad[axis] = (int(padsize // 2), int(padsize // 2))
-    return np.pad(array, pad_width=npad)
-
-
-def closest(N: int, n: int):
-    if N % n == 0:
-        return 0
-    else:
-        q = N // n
-        return (q + 1) * n - N
-
-
-def downsample(array: np.ndarray, tbin: int = 1, fbin: int = 1) -> np.ndarray:
-    freqpad = closest(array.shape[0], fbin)
-    timepad = closest(array.shape[1], tbin)
-    array = pad(array, array.shape[0] + freqpad, axis=0)
-    array = pad(array, array.shape[1] + timepad, axis=1)
-
-    array = array.reshape(
-        int(array.shape[0] // fbin),
-        int(fbin),
-        int(array.shape[1]),
-    ).mean(1)
-
-    array = array.reshape(
-        int(array.shape[0]),
-        int(array.shape[1] // tbin),
-        int(tbin),
-    ).mean(2)
-
-    return array
-
-
 def xtract2fil(
     fn: str | Path,
     nbeams: int,
@@ -165,7 +116,6 @@ def xtract2fil(
 ):
     fn = Path(fn)
     outdir = Path(outdir)
-    downflag = (fbin > 1) or (tbin > 1)
 
     hdr = read_asciihdr(str(fn) + ".ahdr")
 
@@ -188,8 +138,14 @@ def xtract2fil(
     nblks = 32
     defaultdt = 1.31072e-3
     blktime = 800 * defaultdt
-    nt = int(blktime / dt)
+    nt = int(round(blktime / dt))
     slicesize = nf * nt * nblks
+    if (nf % fbin) != 0:
+        raise ValueError(f"fbin={fbin} must be a factor of nf={nf}")
+    elif (nt % tbin) != 0:
+        raise ValueError(f"tbin={tbin} must be a factor of nt={nt}")
+    else:
+        downflag = (fbin > 1) or (tbin > 1)
 
     rad = getattr(u, "rad")
     beamix = radecs["BM-Idx"].to_numpy(dtype=int)
@@ -259,9 +215,11 @@ def xtract2fil(
                 else:
                     array = np.frombuffer(data, dtype=np.uint8)
                 array = array.reshape(-1, nf)
-                array = np.fliplr(array) if flip else array
+                if flip:
+                    array = np.fliplr(array)
                 if downflag:
-                    array = downsample(array, tbin=tbin, fbin=fbin)
+                    array = array.reshape((-1, tbin, array.shape[1])).mean(1)
+                    array = array.reshape((-1, int(array.shape[1] // fbin), fbin)).mean(2)
                     array = array.astype(np.uint8)
                 array.tofile(filfile)
 
