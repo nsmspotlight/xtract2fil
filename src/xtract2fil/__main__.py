@@ -110,12 +110,23 @@ def xtract2fil(
     fn: str | Path,
     nbeams: int,
     outdir: str | Path,
+    scan: str = "",
     fbin: int = 1,
     tbin: int = 1,
     offset: int = 64,
+    dual: bool = False,
 ):
     fn = Path(fn)
-    outdir = Path(outdir)
+    if dual: # In addition to the full resolution data, also write downsampled data.
+        outdir_dwnsmp = Path(outdir)/("FilData_dwnsmp/" + scan)
+        if not outdir_dwnsmp.exists():
+            outdir_dwnsmp.mkdir(parents=True, exist_ok=True)
+        outdir = Path(outdir)/("FilData/" + scan)
+    else:
+        outdir = Path(outdir)
+    if not outdir.exists():
+        outdir.mkdir(parents=True, exist_ok=True)
+    downflag = (fbin > 1) or (tbin > 1)
 
     hdr = read_asciihdr(str(fn) + ".ahdr")
 
@@ -149,7 +160,9 @@ def xtract2fil(
 
     rad = getattr(u, "rad")
     beamix = radecs["BM-Idx"].to_numpy(dtype=int)
-    filpaths = [outdir / f"BM{ix}{'.down' if downflag else ''}.fil" for ix in beamix]
+    filpaths = [outdir / f"BM{ix}.fil" for ix in beamix]
+    if dual:
+        filpaths_dwnsmp = [outdir_dwnsmp / f"BM{ix}.down.fil" for ix in beamix]
     for ix, filpath in enumerate(filpaths):
         coords = SkyCoord(radecs.iloc[ix]["RA"] * rad, radecs.iloc[ix]["DEC"] * rad)
 
@@ -179,32 +192,41 @@ def xtract2fil(
         dec_si, dec_sf = str(dec_s).split(".")
         dec_s = ".".join([dec_si.zfill(2), dec_sf])
         dec_sigproc = float("".join([dec_d, dec_m, dec_s]))
-
-        writehdr(
-            {
-                "rawdatafile": fname,
-                "source_name": source,
-                "nifs": 1,
-                "nbits": nbits,
-                "data_type": 1,
-                "machine_id": 7,
-                "telescope_id": 7,
-                "barycentric": 0,
-                "pulsarcentric": 0,
-                "tstart": mjd,
-                "foff": df * fbin,
-                "fch1": fh,
-                "tsamp": dt * tbin,
-                "nchans": int(nf / fbin),
-                "src_raj": ra_sigproc,
-                "src_dej": dec_sigproc,
-                "size": 0,
-            },
-            str(filpath),
-        )
+        fil_hdr={
+            "rawdatafile": fname,
+            "source_name": source,
+            "nifs": 1,
+            "nbits": nbits,
+            "data_type": 1,
+            "machine_id": 7,
+            "telescope_id": 7,
+            "barycentric": 0,
+            "pulsarcentric": 0,
+            "tstart": mjd,
+            "foff": df,
+            "fch1": fh,
+            "tsamp": dt,
+            "nchans": nf,
+            "src_raj": ra_sigproc,
+            "src_dej": dec_sigproc,
+            "size": 0,
+        }
+        if dual: # Write both the full resolution as well as the downsampled data.
+            writehdr(fil_hdr, str(filpath))
+            fil_hdr["tsamp"] = dt * tbin
+            fil_hdr["foff"] = df * fbin
+            fil_hdr["nchans"] = int(round(nf / fbin))
+            writehdr(fil_hdr, str(filpaths_dwnsmp[ix]))
+        else: # Write either the full resolution or the downsampled data.
+            fil_hdr["tsamp"] = dt * tbin
+            fil_hdr["foff"] = df * fbin
+            fil_hdr["nchans"] = int(round(nf / fbin))
+            writehdr(fil_hdr, str(filpath))
 
     with ExitStack() as stack:
         filfiles = [stack.enter_context(open(_, "ab")) for _ in filpaths]
+        if dual:
+            filfiles_dwnsmp = [stack.enter_context(open(_, "ab")) for _ in filpaths_dwnsmp]
         with open(fn, "rb") as fx:
             for ix, data in enumerate(inchunks(fx, slicesize)):
                 filfile = filfiles[ix % nbeams]
@@ -217,11 +239,20 @@ def xtract2fil(
                 array = array.reshape(-1, nf)
                 if flip:
                     array = np.fliplr(array)
-                if downflag:
-                    array = array.reshape((-1, tbin, array.shape[1])).mean(1)
+                if dual: # Write both the full resolution as well as the downsampled data.
+                    array.tofile(filfile) # First, write the full resolution data.
+                    filfile_dwnsmp = filfiles_dwnsmp[ix % nbeams]
                     array = array.reshape((-1, int(array.shape[1] // fbin), fbin)).mean(2)
+                    array = array.reshape((-1, tbin, array.shape[1])).mean(1)
                     array = array.astype(np.uint8)
-                array.tofile(filfile)
+                    array.tofile(filfile_dwnsmp) # Then, write the downsampled data.
+                elif downflag: # Write the downsampled data only.
+                    array = array.reshape((-1, int(array.shape[1] // fbin), fbin)).mean(2)
+                    array = array.reshape((-1, tbin, array.shape[1])).mean(1)
+                    array = array.astype(np.uint8)
+                    array.tofile(filfile_dwnsmp)
+                else: # Write the full resolution data only.
+                    array.tofile(filfile)
 
 
 @app.default
@@ -233,9 +264,13 @@ def main(
     njobs: int = -1,
     nbeams: int = 10,
     offset: int = 64,
+    dual: bool = True,
     output: str | Path = Path.cwd(),
+    scan: str = "",
 ):
     njobs = njobs if njobs > 0 else len(files)
+    if dual and scan == "":
+        raise ValueError("Please provide a scan name using --scan")
     log.info(f"Xtracting {nbeams} beams from {len(files)} files...")
     log.info(f"Using {njobs} cores")
     Parallel(n_jobs=njobs)(
@@ -246,6 +281,8 @@ def main(
             nbeams=nbeams,
             outdir=output,
             offset=offset,
+            dual=dual,
+            scan=scan,
         )
         for f in files
     )
