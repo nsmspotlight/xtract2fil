@@ -8,13 +8,14 @@ readme = "README.md"
 dynamic = ["version"]
 requires-python = ">=3.8"
 license-files = ["LICENSE"]
-authors = [{name = "Ujjwal Panda", email = "ujjwalpanda97@gmail.com"}]
+authors = [
+  {name = "Ujjwal Panda", email = "ujjwalpanda97@gmail.com"},
+  {name = "Kenil Ajudiya", email = "kra635900@gmail.com"},
+]
 description = "eXtract SIGPROC filterbank files from SPOTLIGHT raw files."
 
 classifiers = [
   "Operating System :: Unix",
-  "Programming Language :: Python :: 3.8",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -49,32 +50,3 @@ packages = {find = {where = ["src"]}}
 
 [tool.setuptools_scm]
 write_to = "src/xtract2fil/_version.py"
-
-[tool.interrogate]
-verbose = 0
-color = true
-quiet = false
-fail-under = 85
-badge-format = "svg"
-whitelist-regex = []
-ignore-magic = true
-ignore-module = false
-ignore-private = false
-ignore-setters = false
-ignore-init-method = true
-omit-covered-files = false
-ignore-init-module = false
-ignore-semiprivate = false
-ignore-nested-classes = true
-badge-style = "for-the-badge"
-ignore-nested-functions = true
-ignore-property-decorators = false
-generate-badge = "assets/interrogate.svg"
-exclude = [
-  "docs",
-  "tests",
-  "build",
-  "assets",
-  "setup.py",
-  "src/xtract2fil/_version.py",
-]
