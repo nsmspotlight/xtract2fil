@@ -329,14 +329,14 @@ def ia(obsname: str):
     rawfiles = [
         f
         for scan in scans
-        if (f := obsdir / "BeamData" / f"{scan}.raw.*").is_file()
+        if (f := obsdir / "IABeamData" / f"{scan}.raw.*").is_file()
         and rxraw.search(f.name)
     ]
 
     hdrfiles = [
         f
         for scan in scans
-        if (f := obsdir / "BeamData" / f"{scan}.raw.*.ahdr").is_file()
+        if (f := obsdir / "IABeamData" / f"{scan}.raw.*.ahdr").is_file()
         and rxhdr.search(f.name)
     ]
 
