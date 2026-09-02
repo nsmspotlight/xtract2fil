@@ -1,10 +1,10 @@
 import re
 import logging
 from pathlib import Path
-from typing import Generator
 from datetime import datetime
 from rich.console import Console
 from contextlib import ExitStack
+from typing import Generator, Annotated
 
 import pytz
 import cyclopts
@@ -13,6 +13,7 @@ import pandas as pd
 import astropy.units as u
 from priwo import writehdr
 from astropy.time import Time
+from cyclopts import Parameter
 from astropy.utils.iers import conf
 from joblib import Parallel, delayed
 from rich.logging import RichHandler
@@ -156,7 +157,7 @@ def dec2flt(coords: SkyCoord) -> float:
     return dec_f
 
 
-def iaxtract(fn: Path) -> None:
+def iaxtract(fn: Path, delete: bool = True) -> None:
     try:
         hdr = asciihdr(fn.with_suffix(".0.ahdr"))
         data = np.fromfile(fn, dtype=np.uint8)
@@ -248,12 +249,13 @@ def iaxtract(fn: Path) -> None:
                     array = array.reshape((-1, tbin, array.shape[1])).mean(1)
                     array = array.astype(np.uint8)
                     array.tofile(dwnfile)
-        fn.unlink(missing_ok=True)
+        if delete:
+            fn.unlink(missing_ok=True)
     except XtractionError as err:
         log.error(f"FAILED: {str(err)}")
 
 
-def pcxtract(fn: Path, fildir: Path, dwndir: Path):
+def pcxtract(fn: Path, fildir: Path, dwndir: Path, delete: bool = True):
     try:
         hdr = asciihdr(str(fn) + ".ahdr")
 
@@ -344,13 +346,14 @@ def pcxtract(fn: Path, fildir: Path, dwndir: Path):
                     array = array.reshape((-1, tbin, array.shape[1])).mean(1)
                     array = array.astype(np.uint8)
                     array.tofile(dwnfiles[ix % nbeams])
-        fn.unlink(missing_ok=True)
+        if delete:
+            fn.unlink(missing_ok=True)
     except XtractionError as err:
         log.error(f"FAILED: {str(err)}")
 
 
 @app.command
-def ia(obsname: str):
+def ia(obsname: str, delete: Annotated[bool, Parameter(alias="-d")] = True):
     obsdir = Path("/lustre_data/spotlight/data") / obsname
     scans = set([_.name.split(".")[0] for _ in (obsdir / "IABeamData").glob("*.raw*")])
     hdrfiles = [obsdir / "IABeamData" / f"{scan}.raw.0.ahdr" for scan in scans]
@@ -365,11 +368,11 @@ def ia(obsname: str):
     log.info(f"Xtracting IA beam data for {obsdir}...")
     log.info(f"Number of rawfiles = {len(rawfiles):d}.")
     log.info(f"Number of cores being used = {njobs:d} cores.")
-    Parallel(n_jobs=njobs)(delayed(iaxtract)(fn=fn) for fn in rawfiles)
+    Parallel(n_jobs=njobs)(delayed(iaxtract)(fn=fn, delete=delete) for fn in rawfiles)
 
 
 @app.command
-def pc(obsname: str):
+def pc(obsname: str, delete: Annotated[bool, Parameter(alias="-d")] = True):
     nhosts = 16
     obsdir = Path("/lustre_data/spotlight/data") / obsname
     scans = set([_.name.split(".")[0] for _ in (obsdir / "BeamData").glob("*.raw*")])
@@ -407,6 +410,7 @@ def pc(obsname: str):
                 fn=fn,
                 fildir=fildir,
                 dwndir=dwndir,
+                delete=delete,
             )
             for fn in rawfiles
         )
