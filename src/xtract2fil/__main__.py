@@ -157,186 +157,196 @@ def dec2flt(coords: SkyCoord) -> float:
 
 
 def iaxtract(fn: Path) -> None:
-    hdr = asciihdr(fn.with_suffix(".0.ahdr"))
-    data = np.fromfile(fn, dtype=np.uint8)
-    data = data.reshape(-1, hdr["nf"])
+    try:
+        hdr = asciihdr(fn.with_suffix(".0.ahdr"))
+        data = np.fromfile(fn, dtype=np.uint8)
+        data = data.reshape(-1, hdr["nf"])
 
-    nf = hdr["nf"]
-    fh = hdr["f0"]
-    df = hdr["df"]
-    dt = hdr["dt"]
-    bw = hdr["bw"]
-    nbits = hdr["nbits"]
-    fname = str(fn.name)
-    source = hdr["source"]
-    mjd = getmjd(hdr["istdatetime"])
+        nf = hdr["nf"]
+        fh = hdr["f0"]
+        df = hdr["df"]
+        dt = hdr["dt"]
+        bw = hdr["bw"]
+        nbits = hdr["nbits"]
+        fname = str(fn.name)
+        source = hdr["source"]
+        mjd = getmjd(hdr["istdatetime"])
 
-    flip = True if df > 0.0 else False
-    if flip:
-        df = -df
-        fh = hdr["f0"] + bw - (0.5 * df)
+        flip = True if df > 0.0 else False
+        if flip:
+            df = -df
+            fh = hdr["f0"] + bw - (0.5 * df)
 
-    rad = getattr(u, "rad")
-    obstime = Time(mjd, format="mjd")
-    coords = SkyCoord(
-        hdr["ra"] * rad,
-        hdr["dec"] * rad,
-        frame=TETE(obstime=obstime),
-    ).transform_to("icrs")
-    ra_f = ra2flt(coords)
-    dec_f = dec2flt(coords)
-
-    nblks = 32
-    defaultdt = 1.31072e-3
-    blktime = 800 * defaultdt
-    nt = int(round(blktime / dt))
-    slicesize = nf * nt * nblks
-
-    fbin = int(nf / 1024)
-    tbin = int(13.1072e-3 / dt)
-    if (nf % fbin) != 0:
-        raise ValueError(f"fbin={fbin} must be a factor of nf={nf}")
-    elif (nt % tbin) != 0:
-        raise ValueError(f"tbin={tbin} must be a factor of nt={nt}")
-
-    filhdr = {
-        "rawdatafile": fname,
-        "source_name": source,
-        "az_start": 0.0,
-        "za_start": 0.0,
-        "src_raj": ra_f,
-        "src_dej": dec_f,
-        "tstart": mjd,
-        "tsamp": dt,
-        "fch1": fh,
-        "foff": df,
-        "nchans": nf,
-        "telescope_id": 7,
-        "machine_id": 14,
-        "data_type": 1,
-        "ibeam": 1,
-        "nbeams": 1,
-        "nbits": nbits,
-        "barycentric": 0,
-        "pulsarcentric": 0,
-        "nifs": 1,
-        "size": 0,
-    }
-
-    writehdr(filhdr, fn.with_suffix(".fil"))
-
-    filhdr["foff"] = df * fbin
-    filhdr["tsamp"] = dt * tbin
-    filhdr["nchans"] = int(round(nf / fbin))
-    writehdr(filhdr, fn.with_suffix(".down.fil"))
-
-    with ExitStack() as stack:
-        filfile = stack.enter_context(open(fn.with_suffix(".fil"), "ab"))
-        dwnfile = stack.enter_context(open(fn.with_suffix(".down.fil"), "ab"))
-        with open(fn, "rb") as f:
-            for data in inchunks(f, slicesize):
-                array = np.frombuffer(data, dtype=np.uint8)
-                array = array.reshape(-1, nf)
-                if flip:
-                    array = np.fliplr(array)
-                array.tofile(filfile)
-
-                array = array.reshape((-1, int(array.shape[1] // fbin), fbin)).mean(2)
-                array = array.reshape((-1, tbin, array.shape[1])).mean(1)
-                array = array.astype(np.uint8)
-                array.tofile(dwnfile)
-    fn.unlink(missing_ok=True)
-
-
-def pcxtract(fn: Path, fildir: Path, dwndir: Path):
-    hdr = asciihdr(str(fn) + ".ahdr")
-
-    nbeams = hdr["nbeamsperhost"]
-
-    nf = hdr["nf"]
-    fh = hdr["f0"]
-    df = hdr["df"]
-    dt = hdr["dt"]
-    bw = hdr["bw"]
-    nbits = hdr["nbits"]
-    fname = str(fn.name)
-    source = hdr["source"]
-    radecs = hdr["coords"]
-    mjd = getmjd(hdr["istdatetime"])
-
-    flip = True if df > 0.0 else False
-    if flip:
-        df = -df
-        fh = hdr["f0"] + bw - (0.5 * df)
-
-    nblks = 32
-    defaultdt = 1.31072e-3
-    blktime = 800 * defaultdt
-    nt = int(round(blktime / dt))
-    slicesize = nf * nt * nblks
-
-    fbin = int(nf / 1024)
-    tbin = int(13.1072e-3 / dt)
-    if (nf % fbin) != 0:
-        raise ValueError(f"fbin={fbin} must be a factor of nf={nf}")
-    elif (nt % tbin) != 0:
-        raise ValueError(f"tbin={tbin} must be a factor of nt={nt}")
-
-    rad = getattr(u, "rad")
-    beamix = radecs["BM-Idx"].to_numpy(dtype=int)
-    filpaths = [fildir / f"BM{ix}.fil" for ix in beamix]
-    dwnpaths = [dwndir / f"BM{ix}.down.fil" for ix in beamix]
-    for ix, filpath in enumerate(filpaths):
+        rad = getattr(u, "rad")
         obstime = Time(mjd, format="mjd")
         coords = SkyCoord(
-            radecs.iloc[ix]["RA"] * rad,
-            radecs.iloc[ix]["DEC"] * rad,
+            hdr["ra"] * rad,
+            hdr["dec"] * rad,
             frame=TETE(obstime=obstime),
         ).transform_to("icrs")
         ra_f = ra2flt(coords)
         dec_f = dec2flt(coords)
+
+        nblks = 32
+        defaultdt = 1.31072e-3
+        blktime = 800 * defaultdt
+        nt = int(round(blktime / dt))
+        slicesize = nf * nt * nblks
+
+        fbin = int(nf / 1024)
+        tbin = int(13.1072e-3 / dt)
+        if (nf % fbin) != 0:
+            raise ValueError(f"fbin={fbin} must be a factor of nf={nf}")
+        elif (nt % tbin) != 0:
+            raise ValueError(f"tbin={tbin} must be a factor of nt={nt}")
+
         filhdr = {
             "rawdatafile": fname,
             "source_name": source,
-            "nifs": 1,
-            "nbits": nbits,
-            "data_type": 1,
-            "machine_id": 7,
-            "telescope_id": 7,
-            "barycentric": 0,
-            "pulsarcentric": 0,
-            "tstart": mjd,
-            "foff": df,
-            "fch1": fh,
-            "tsamp": dt,
-            "nchans": nf,
+            "az_start": 0.0,
+            "za_start": 0.0,
             "src_raj": ra_f,
             "src_dej": dec_f,
+            "tstart": mjd,
+            "tsamp": dt,
+            "fch1": fh,
+            "foff": df,
+            "nchans": nf,
+            "telescope_id": 7,
+            "machine_id": 14,
+            "data_type": 1,
+            "ibeam": 1,
+            "nbeams": 1,
+            "nbits": nbits,
+            "barycentric": 0,
+            "pulsarcentric": 0,
+            "nifs": 1,
             "size": 0,
         }
-        writehdr(filhdr, str(filpath))
+
+        writehdr(filhdr, fn.with_suffix(".fil"))
 
         filhdr["foff"] = df * fbin
         filhdr["tsamp"] = dt * tbin
         filhdr["nchans"] = int(round(nf / fbin))
-        writehdr(filhdr, str(dwnpaths[ix]))
+        writehdr(filhdr, fn.with_suffix(".down.fil"))
 
-    with ExitStack() as stack:
-        filfiles = [stack.enter_context(open(_, "ab")) for _ in filpaths]
-        dwnfiles = [stack.enter_context(open(_, "ab")) for _ in dwnpaths]
-        with open(fn, "rb") as f:
-            for ix, data in enumerate(inchunks(f, slicesize)):
-                array = np.frombuffer(data, dtype=np.uint8)
-                array = array.reshape(-1, nf)
-                if flip:
-                    array = np.fliplr(array)
-                array.tofile(filfiles[ix % nbeams])
+        with ExitStack() as stack:
+            filfile = stack.enter_context(open(fn.with_suffix(".fil"), "ab"))
+            dwnfile = stack.enter_context(open(fn.with_suffix(".down.fil"), "ab"))
+            with open(fn, "rb") as f:
+                for data in inchunks(f, slicesize):
+                    array = np.frombuffer(data, dtype=np.uint8)
+                    array = array.reshape(-1, nf)
+                    if flip:
+                        array = np.fliplr(array)
+                    array.tofile(filfile)
 
-                array = array.reshape((-1, int(array.shape[1] // fbin), fbin)).mean(2)
-                array = array.reshape((-1, tbin, array.shape[1])).mean(1)
-                array = array.astype(np.uint8)
-                array.tofile(dwnfiles[ix % nbeams])
-    fn.unlink(missing_ok=True)
+                    array = array.reshape((-1, int(array.shape[1] // fbin), fbin)).mean(
+                        2
+                    )
+                    array = array.reshape((-1, tbin, array.shape[1])).mean(1)
+                    array = array.astype(np.uint8)
+                    array.tofile(dwnfile)
+        fn.unlink(missing_ok=True)
+    except XtractionError as err:
+        log.error(f"FAILED: {str(err)}")
+
+
+def pcxtract(fn: Path, fildir: Path, dwndir: Path):
+    try:
+        hdr = asciihdr(str(fn) + ".ahdr")
+
+        nbeams = hdr["nbeamsperhost"]
+
+        nf = hdr["nf"]
+        fh = hdr["f0"]
+        df = hdr["df"]
+        dt = hdr["dt"]
+        bw = hdr["bw"]
+        nbits = hdr["nbits"]
+        fname = str(fn.name)
+        source = hdr["source"]
+        radecs = hdr["coords"]
+        mjd = getmjd(hdr["istdatetime"])
+
+        flip = True if df > 0.0 else False
+        if flip:
+            df = -df
+            fh = hdr["f0"] + bw - (0.5 * df)
+
+        nblks = 32
+        defaultdt = 1.31072e-3
+        blktime = 800 * defaultdt
+        nt = int(round(blktime / dt))
+        slicesize = nf * nt * nblks
+
+        fbin = int(nf / 1024)
+        tbin = int(13.1072e-3 / dt)
+        if (nf % fbin) != 0:
+            raise ValueError(f"fbin={fbin} must be a factor of nf={nf}")
+        elif (nt % tbin) != 0:
+            raise ValueError(f"tbin={tbin} must be a factor of nt={nt}")
+
+        rad = getattr(u, "rad")
+        beamix = radecs["BM-Idx"].to_numpy(dtype=int)
+        filpaths = [fildir / f"BM{ix}.fil" for ix in beamix]
+        dwnpaths = [dwndir / f"BM{ix}.down.fil" for ix in beamix]
+        for ix, filpath in enumerate(filpaths):
+            obstime = Time(mjd, format="mjd")
+            coords = SkyCoord(
+                radecs.iloc[ix]["RA"] * rad,
+                radecs.iloc[ix]["DEC"] * rad,
+                frame=TETE(obstime=obstime),
+            ).transform_to("icrs")
+            ra_f = ra2flt(coords)
+            dec_f = dec2flt(coords)
+            filhdr = {
+                "rawdatafile": fname,
+                "source_name": source,
+                "nifs": 1,
+                "nbits": nbits,
+                "data_type": 1,
+                "machine_id": 7,
+                "telescope_id": 7,
+                "barycentric": 0,
+                "pulsarcentric": 0,
+                "tstart": mjd,
+                "foff": df,
+                "fch1": fh,
+                "tsamp": dt,
+                "nchans": nf,
+                "src_raj": ra_f,
+                "src_dej": dec_f,
+                "size": 0,
+            }
+            writehdr(filhdr, str(filpath))
+
+            filhdr["foff"] = df * fbin
+            filhdr["tsamp"] = dt * tbin
+            filhdr["nchans"] = int(round(nf / fbin))
+            writehdr(filhdr, str(dwnpaths[ix]))
+
+        with ExitStack() as stack:
+            filfiles = [stack.enter_context(open(_, "ab")) for _ in filpaths]
+            dwnfiles = [stack.enter_context(open(_, "ab")) for _ in dwnpaths]
+            with open(fn, "rb") as f:
+                for ix, data in enumerate(inchunks(f, slicesize)):
+                    array = np.frombuffer(data, dtype=np.uint8)
+                    array = array.reshape(-1, nf)
+                    if flip:
+                        array = np.fliplr(array)
+                    array.tofile(filfiles[ix % nbeams])
+
+                    array = array.reshape((-1, int(array.shape[1] // fbin), fbin)).mean(
+                        2
+                    )
+                    array = array.reshape((-1, tbin, array.shape[1])).mean(1)
+                    array = array.astype(np.uint8)
+                    array.tofile(dwnfiles[ix % nbeams])
+        fn.unlink(missing_ok=True)
+    except XtractionError as err:
+        log.error(f"FAILED: {str(err)}")
 
 
 @app.command
