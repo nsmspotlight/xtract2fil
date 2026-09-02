@@ -245,6 +245,7 @@ def iaxtract(fn: Path) -> None:
                 array = array.reshape((-1, tbin, array.shape[1])).mean(1)
                 array = array.astype(np.uint8)
                 array.tofile(dwnfile)
+    fn.unlink(missing_ok=True)
 
 
 def pcxtract(fn: Path, fildir: Path, dwndir: Path):
@@ -335,6 +336,7 @@ def pcxtract(fn: Path, fildir: Path, dwndir: Path):
                 array = array.reshape((-1, tbin, array.shape[1])).mean(1)
                 array = array.astype(np.uint8)
                 array.tofile(dwnfiles[ix % nbeams])
+    fn.unlink(missing_ok=True)
 
 
 @app.command
