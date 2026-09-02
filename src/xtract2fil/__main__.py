@@ -13,9 +13,12 @@ import pandas as pd
 import astropy.units as u
 from priwo import writehdr
 from astropy.time import Time
+from astropy.utils.iers import conf
 from joblib import Parallel, delayed
 from rich.logging import RichHandler
 from astropy.coordinates import SkyCoord, TETE
+
+conf.auto_max_age = None
 
 app = cyclopts.App()
 app["--help"].group = "Admin"
@@ -90,10 +93,10 @@ def asciihdr(fn: str | Path) -> dict:
                     "Beam mode": ("beammode", str),
                     "No. of stokes": ("npol", int),
                     "Num bits/sample": ("nbits", int),
-                    "Total No. of Beams": ("nbeams", int),
-                    "No. of PC Baselines": ("nbaselines", int),
-                    "Total No. of Beams/host": ("nbeamsperhost", int),
                     "De-Disperion DM": ("dm", lambda x: None if x == "NA" else float(x)),
+                    "Total No. of Beams": ("nbeams", lambda x: None if x == "NA" else int(x)),
+                    "No. of PC Baselines": ("nbaselines", lambda x: None if x == "NA" else int(x)),
+                    "Total No. of Beams/host": ("nbeamsperhost", lambda x: None if x == "NA" else int(x)),
                     "Date": ("istdate", str),
                     "IST Time": ("isttime", str),
                 }[key]
@@ -162,10 +165,16 @@ def iaxtract(fn: Path) -> None:
     fh = hdr["f0"]
     df = hdr["df"]
     dt = hdr["dt"]
+    bw = hdr["bw"]
     nbits = hdr["nbits"]
     fname = str(fn.name)
     source = hdr["source"]
     mjd = getmjd(hdr["istdatetime"])
+
+    flip = True if df > 0.0 else False
+    if flip:
+        df = -df
+        fh = hdr["f0"] + bw - (0.5 * df)
 
     rad = getattr(u, "rad")
     obstime = Time(mjd, format="mjd")
@@ -228,6 +237,8 @@ def iaxtract(fn: Path) -> None:
             for data in inchunks(f, slicesize):
                 array = np.frombuffer(data, dtype=np.uint8)
                 array = array.reshape(-1, nf)
+                if flip:
+                    array = np.fliplr(array)
                 array.tofile(filfile)
 
                 array = array.reshape((-1, int(array.shape[1] // fbin), fbin)).mean(2)
@@ -245,11 +256,17 @@ def pcxtract(fn: Path, fildir: Path, dwndir: Path):
     fh = hdr["f0"]
     df = hdr["df"]
     dt = hdr["dt"]
+    bw = hdr["bw"]
     nbits = hdr["nbits"]
     fname = str(fn.name)
     source = hdr["source"]
     radecs = hdr["coords"]
     mjd = getmjd(hdr["istdatetime"])
+
+    flip = True if df > 0.0 else False
+    if flip:
+        df = -df
+        fh = hdr["f0"] + bw - (0.5 * df)
 
     nblks = 32
     defaultdt = 1.31072e-3
@@ -310,6 +327,8 @@ def pcxtract(fn: Path, fildir: Path, dwndir: Path):
             for ix, data in enumerate(inchunks(f, slicesize)):
                 array = np.frombuffer(data, dtype=np.uint8)
                 array = array.reshape(-1, nf)
+                if flip:
+                    array = np.fliplr(array)
                 array.tofile(filfiles[ix % nbeams])
 
                 array = array.reshape((-1, int(array.shape[1] // fbin), fbin)).mean(2)
@@ -322,23 +341,8 @@ def pcxtract(fn: Path, fildir: Path, dwndir: Path):
 def ia(obsname: str):
     obsdir = Path("/lustre_data/spotlight/data") / obsname
     scans = set([_.name.split(".")[0] for _ in (obsdir / "IABeamData").glob("*.raw*")])
-
-    rxraw = re.compile(r"\.raw\.\d+$")
-    rxhdr = re.compile(r"\.raw\.\d+\.ahdr$")
-
-    rawfiles = [
-        f
-        for scan in scans
-        if (f := obsdir / "IABeamData" / f"{scan}.raw.*").is_file()
-        and rxraw.search(f.name)
-    ]
-
-    hdrfiles = [
-        f
-        for scan in scans
-        if (f := obsdir / "IABeamData" / f"{scan}.raw.*.ahdr").is_file()
-        and rxhdr.search(f.name)
-    ]
+    hdrfiles = [obsdir / "IABeamData" / f"{scan}.raw.0.ahdr" for scan in scans]
+    rawfiles = [obsdir / "IABeamData" / f"{scan}.raw.0" for scan in scans]
 
     if (len(rawfiles) != len(scans)) or (len(hdrfiles) != len(scans)):
         raise XtractionError("MISSING FILES. ABORT.")
@@ -379,8 +383,8 @@ def pc(obsname: str):
 
         fildir = Path(obsdir) / "FilData" / scan
         dwndir = Path(obsdir) / "FilData_dwnsmp" / scan
-        fildir.mkdir(exist_ok=True)
-        dwndir.mkdir(exist_ok=True)
+        fildir.mkdir(parents=True, exist_ok=True)
+        dwndir.mkdir(parents=True, exist_ok=True)
 
         njobs = len(rawfiles)
         log.info(f"Xtracting data for {scan}...")
