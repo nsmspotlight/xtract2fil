@@ -157,7 +157,7 @@ def dec2flt(coords: SkyCoord) -> float:
     return dec_f
 
 
-def iaxtract(fn: Path, delete: bool = True) -> None:
+def iaxtract(fn: Path, preserve: bool = False) -> None:
     try:
         hdr = asciihdr(fn.with_suffix(".0.ahdr"))
         data = np.fromfile(fn, dtype=np.uint8)
@@ -249,13 +249,13 @@ def iaxtract(fn: Path, delete: bool = True) -> None:
                     array = array.reshape((-1, tbin, array.shape[1])).mean(1)
                     array = array.astype(np.uint8)
                     array.tofile(dwnfile)
-        if delete:
+        if not preserve:
             fn.unlink(missing_ok=True)
     except XtractionError as err:
         log.error(f"FAILED: {str(err)}")
 
 
-def pcxtract(fn: Path, fildir: Path, dwndir: Path, delete: bool = True):
+def pcxtract(fn: Path, fildir: Path, dwndir: Path, preserve: bool = False):
     try:
         hdr = asciihdr(str(fn) + ".ahdr")
 
@@ -346,14 +346,14 @@ def pcxtract(fn: Path, fildir: Path, dwndir: Path, delete: bool = True):
                     array = array.reshape((-1, tbin, array.shape[1])).mean(1)
                     array = array.astype(np.uint8)
                     array.tofile(dwnfiles[ix % nbeams])
-        if delete:
+        if not preserve:
             fn.unlink(missing_ok=True)
     except XtractionError as err:
         log.error(f"FAILED: {str(err)}")
 
 
 @app.command
-def ia(obsname: str, delete: Annotated[bool, Parameter(alias="-d")] = True):
+def ia(obsname: str, preserve: Annotated[bool, Parameter(alias="-d")] = True):
     obsdir = Path("/lustre_data/spotlight/data") / obsname
     scans = set([_.name.split(".")[0] for _ in (obsdir / "IABeamData").glob("*.raw*")])
     hdrfiles = [obsdir / "IABeamData" / f"{scan}.raw.0.ahdr" for scan in scans]
@@ -368,11 +368,13 @@ def ia(obsname: str, delete: Annotated[bool, Parameter(alias="-d")] = True):
     log.info(f"Xtracting IA beam data for {obsdir}...")
     log.info(f"Number of rawfiles = {len(rawfiles):d}.")
     log.info(f"Number of cores being used = {njobs:d} cores.")
-    Parallel(n_jobs=njobs)(delayed(iaxtract)(fn=fn, delete=delete) for fn in rawfiles)
+    Parallel(n_jobs=njobs)(
+        delayed(iaxtract)(fn=fn, preserve=preserve) for fn in rawfiles
+    )
 
 
 @app.command
-def pc(obsname: str, delete: Annotated[bool, Parameter(alias="-d")] = True):
+def pc(obsname: str, preserve: Annotated[bool, Parameter(alias="-p")] = False):
     nhosts = 16
     obsdir = Path("/lustre_data/spotlight/data") / obsname
     scans = set([_.name.split(".")[0] for _ in (obsdir / "BeamData").glob("*.raw*")])
@@ -410,7 +412,7 @@ def pc(obsname: str, delete: Annotated[bool, Parameter(alias="-d")] = True):
                 fn=fn,
                 fildir=fildir,
                 dwndir=dwndir,
-                delete=delete,
+                preserve=preserve,
             )
             for fn in rawfiles
         )
